@@ -56,72 +56,44 @@ Generate the content for "${sectionHeader}" now, in Markdown format.
 `;
 
 export const INFOGRAPHIC_PROMPT = (sectionContent) => `
-Analyze the following blog section content and extract key points suitable for an infographic with brand consistency.
-
-CONTENT:
+**CONTENT TO ANALYZE:**
 ${sectionContent}
 
-BRAND GUIDELINES WITH EXACT COLOR CODES:
-- Primary Background: Use primary color #F54AFC or lighter shades (#FEF0EB, #FBD2C2) for brown theme
-- Include brand logo in background (positioned appropriately)
-- Secondary Color: #1F7CE4 for accents and highlights
-- Success Green: #10B981 for positive indicators
-- Dark Text: #0F172A for high contrast readability
-- White: #FFFFFF for text backgrounds and contrast
-- Maintain brand color consistency throughout
-- Use different colored logos available in public/images/ (dark_blue_logo.png, primary_color_logo.png, white_color_logo.png)
-- Ensure professional and clean design
-- Brand colors should be prominent and consistent
+**TASK:** Extract key points for a clean, specific infographic.
 
-OUTPUT FORMAT:
-- Infographic Title
-- Key Data Points / Bullets (formatted for visual appeal)
-- Brand-aware Visual Description (for designer with specific color codes)
-- Recommended logo color from available options
+**OUTPUT FORMAT:**
+- Title: [Clear, specific title]
+- Key Points: [3-5 bullet points max]
+- Visual Layout: [Brief description of layout]
 
-If no infographic is suitable for this section, output "NO_INFOGRAPHIC".
+If no infographic needed, output "NO_INFOGRAPHIC".
 `;
 
 export const BRAND_IMAGE_GENERATION_PROMPT = (
   infographicData,
   logoPreference = "auto"
 ) => `
-Create an infographic with the following specifications:
+**PROMPT:** ${infographicData.title || "Professional infographic"}
 
-BRAND REQUIREMENTS WITH EXACT COLOR CODES:
-- Dimensions: 1408x768 pixels
-- Primary Background Color: Use primary color #F54AFC or lighter brown shades (#FEF0EB, #FBD2C2, #FB9B9A)
-- Secondary Accent Color: #1F7CE4 for highlights and callouts
-- Success/Positive Elements: #10B981 for checkmarks, positive indicators
-- Text Colors: #0F172A for main text, #FFFFFF for text on dark backgrounds
-- Brand logo integration: ${
+**LAYOUT:** Modern design with clear sections and visual hierarchy.
+
+**BRAND COLORS:**
+- Background: Brown theme (#F54AFC or #FB9B9A)
+- Accent: Blue (#1F7CE4)
+- Text: White (#FFFFFF) on dark, Dark (#0F172A) on light
+- Success: Green (#10B981)
+
+**LOGO:** ${
   logoPreference === "auto"
-    ? "Choose appropriate logo from available colors"
-    : `Use ${logoPreference} logo`
+    ? "TST Technology logo in corner"
+    : `${logoPreference} logo in corner`
 }
-- Professional and clean design aesthetic
-- Brand color consistency throughout
 
-INFOGRAPHIC DATA:
-${infographicData}
+**STYLE:** Clean, professional, flat design with icons and clear typography.
 
-VISUAL DESIGN SPECIFICATIONS WITH COLOR CODES:
-- Use primary color #F54AFC as foundation (or lighter shades for brown theme)
-- Secondary color #1F7CE4 for emphasis and call-to-action elements
-- Success color #10B981 for positive indicators and achievements
-- Integrate logo seamlessly in background or corner using appropriate color variant
-- Ensure text readability with #0F172A on light backgrounds, #FFFFFF on dark
-- Modern, professional layout with brand-identifiable design elements
-- Clean typography that matches brand guidelines
+**DIMENSIONS:** Widescreen format optimized for web display.
 
-TECHNICAL REQUIREMENTS:
-- Exact dimensions: 1408x768 pixels
-- High resolution output
-- PNG format
-- Optimized for web use
-- Color accuracy: Use exact hex codes provided
-
-Generate an infographic that perfectly represents the brand with precise color specifications while effectively communicating the key information.
+Generate this infographic now.
 `;
 
 export const BRAND_COLOR_PALETTE = {

@@ -1,0 +1,14 @@
+
+## Core Components of a Frontend Monitoring Strategy
+
+A robust frontend monitoring strategy typically integrates two complementary approaches: Real User Monitoring (RUM) and Synthetic Monitoring. Both provide critical insights into your application's performance and user experience, but they do so from different perspectives. Understanding how they work together is key to comprehensive operational visibility.
+
+### Real User Monitoring (RUM)
+
+Real User Monitoring (RUM), sometimes referred to as passive monitoring, involves collecting performance and behavioral data directly from actual users as they interact with your web application. This data is gathered asynchronously in the background via small JavaScript snippets embedded in the application's code. RUM captures the true user experience across a vast array of variables, including different devices, browsers, geographic locations, network conditions, and even individual user behavior patterns.
+
+The primary benefit of RUM is its authenticity. It provides an unfiltered view of how your application performs for real people in real-world scenarios, revealing issues that synthetic tests might miss. For example, a front end monitor leveraging RUM can detect performance degradations specific to a certain browser version, or latency spikes affecting users on a particular mobile carrier. Key metrics captured by RUM include page load times, resource load times, JavaScript errors, network requests, and user interaction timings. This rich dataset allows development teams to prioritize optimizations based on the actual impact on their user base, identifying critical bottlenecks and improving conversion funnels. ### Synthetic Monitoring
+
+Synthetic Monitoring, also known as proactive monitoring or active monitoring, involves simulating user interactions with your application from various global locations using automated scripts. Unlike RUM, which reacts to real user activity, synthetic monitoring actively "pings" your application at regular intervals, often before real users even encounter a problem. These scripts can simulate simple page loads, complex multi-step transactions (like a login or checkout process), or API calls.
+
+The main advantage of synthetic monitoring is its consistency and control. Since tests are run from controlled environments and on a predefined schedule, it provides a stable baseline for performance measurement. This allows teams to track trends over time, identify performance regressions introduced by new deployments, and test specific user flows under specific conditions (e.g., different device types, network speeds). Synthetic monitoring is particularly useful for verifying uptime, availability, and the performance of critical business transactions 24/7. It acts as an early warning system, alerting teams to potential issues before they impact a large number of real users, thereby minimizing downtime and mitigating revenue loss.
