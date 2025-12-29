@@ -30,6 +30,8 @@ export const loadContentCsv = (filePath) => {
     author: record['Author'],
     imageInclude: record['Image inculde'] === 'Yes',
     heroImage: record['Hero Image'],
-    bannerImage: record['Inbox banner Image']
+    bannerImage: record['Inbox banner Image'],
+    referenceLinks: record['Refernce Link'] || record['Reference Link'], // Handle typo in CSV header
+    internalLinks: record['Link']
   }));
 };

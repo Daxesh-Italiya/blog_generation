@@ -1,16 +1,12 @@
 import fs from "fs";
 import path from "path";
-import { generateContent, generateImagePrompt } from "../services/llm.js";
+import { generateContent } from "../services/llm.js";
+import { CostTracker } from "../utils/costTracker.js";
 import {
   CONTEXT_PROMPT,
   SECTION_PROMPT,
-  INFOGRAPHIC_PROMPT,
+  META_DATA_PROMPT,
 } from "../utils/prompts.js";
-import {
-  getImageLink,
-  ensurePublicDir,
-  generateImage,
-} from "../services/imageService.js";
 import chalk from "chalk";
 
 const OUTPUT_DIR = path.join(process.cwd(), "output");
@@ -57,64 +53,6 @@ const parseOutlineIntoSections = (outline) => {
   return sections;
 };
 
-/**
- * Parse the INFOGRAPHIC_PLAN.md file to extract image prompts
- * @param {string} planPath - Path to the INFOGRAPHIC_PLAN.md file
- * @returns {Array} - Array of objects containing section and image prompt
- */
-const parseImagePrompts = (planPath) => {
-  if (!fs.existsSync(planPath)) {
-    console.warn(
-      chalk.yellow(
-        `Infographic plan not found at ${planPath}. Skipping image generation.`
-      )
-    );
-    return [];
-  }
-
-  const content = fs.readFileSync(planPath, "utf8");
-  const imagePrompts = [];
-
-  // Split content by section markers (## For Section:)
-  const sections = content.split("## For Section:");
-
-  // Process each section (skip the first one which is the header)
-  for (let i = 1; i < sections.length; i++) {
-    const sectionContent = sections[i].trim();
-
-    // Extract the section title (first line)
-    const firstLine = sectionContent.split("\n")[0].trim();
-    const sectionTitle = firstLine.replace(/^: /, "");
-
-    // Look for "Visual Description" section
-    const visualDescMatch = sectionContent.match(
-      /Visual Description.*?:\s*(.*?)(?=\n\n|\n##|$)/s
-    );
-
-    if (visualDescMatch && visualDescMatch[1]) {
-      const visualDescription = visualDescMatch[1].trim();
-
-      // Create a simplified prompt for image generation
-      // In a real implementation, you might want to process this more carefully
-      const imagePrompt = `Create a professional, modern infographic based on this description: ${visualDescription}`;
-
-      // Create a sanitized filename from the section title
-      const filename = sectionTitle
-        .replace(/H2: /, "")
-        .replace(/[^a-z0-9]+/gi, "-")
-        .toLowerCase();
-
-      imagePrompts.push({
-        sectionTitle,
-        prompt: imagePrompt,
-        filename,
-      });
-    }
-  }
-
-  return imagePrompts;
-};
-
 export const runWorkflow = async (articleData) => {
   console.log(chalk.blue(`\nProcessing Article: ${articleData.title}`));
 
@@ -124,7 +62,9 @@ export const runWorkflow = async (articleData) => {
   if (!fs.existsSync(articleDir)) {
     fs.mkdirSync(articleDir, { recursive: true });
   }
-  ensurePublicDir();
+
+  // Token Tracking & Cost Persistence
+  const costTracker = new CostTracker(OUTPUT_DIR, articleData.title);
 
   // 2. Parse Outline into sections
   console.log(chalk.yellow("Parsing outline into sections..."));
@@ -135,7 +75,6 @@ export const runWorkflow = async (articleData) => {
   console.log(chalk.yellow("Phase 1: Context Setup..."));
   // We inform the LLM of the context, but for 'no approval' mode we mainly just initialize our internal memory
   let fullBlogContent = "";
-  let infographicContent = "# Infographic Plan\n\n";
 
   // 4. Determine where to start processing
   console.log(chalk.yellow("Checking for existing sections..."));
@@ -206,14 +145,6 @@ export const runWorkflow = async (articleData) => {
       );
       fullBlogContent = contentWithoutHeader;
     }
-
-    // Try to load the infographic plan if it exists
-    const infoPath = path.join(articleDir, "INFOGRAPHIC_PLAN.md");
-    if (fs.existsSync(infoPath)) {
-      console.log(chalk.cyan("Found infographic plan, loading..."));
-      const infoContent = fs.readFileSync(infoPath, "utf8");
-      infographicContent = infoContent;
-    }
   }
 
   // 5. Section Loop
@@ -239,37 +170,28 @@ export const runWorkflow = async (articleData) => {
     const previousSections = sections.slice(0, i).map((s) => s.h2Heading);
     const upcomingSections = sections.slice(i + 1).map((s) => s.h2Heading);
 
-    const sectionBody = await generateContent(
+    const { content: sectionBody, usage } = await generateContent(
       SECTION_PROMPT(
         combinedHeader,
         articleData,
         fullBlogContent.slice(-2000),
         previousSections,
-        upcomingSections
+        upcomingSections,
+        articleData.referenceLinks, // Pass extracted reference links
+        articleData.faqs,           // Pass extracted FAQs
+        articleData.internalLinks   // Pass extracted internal/website links
       ),
       `Write the content for section: ${section.h2Heading}`
     );
 
-    // B. Handle Images
-    let finalSectionContent = `\n${sectionBody}\n`;
+    // Track Usage
+    costTracker.track(`Section: ${section.h2Heading}`, usage);
 
-    // Check if we need to insert Hero Image at the start
-    if (i === 0 && articleData.heroImage) {
-      const link = getImageLink(slug, path.basename(articleData.heroImage));
-      if (link) finalSectionContent = `${link}\n\n${finalSectionContent}`;
-    }
+    // B. Save Individual Section File
+    // FAILSAFE: Forcefully replace any remaining em-dashes with hyphens
+    const cleanSectionBody = sectionBody.replace(/—/g, "-");
+    let finalSectionContent = `\n${cleanSectionBody}\n`;
 
-    // [New] Generate Image Prompt using Gemini if Image Include is Yes
-    if (articleData.imageInclude) {
-      const imgPrompt = await generateImagePrompt(
-        `An illustration for a blog section titled "${
-          section.h2Heading
-        }": ${sectionBody.slice(0, 100)}...`
-      );
-      finalSectionContent += `\n\n<!-- AI Image Prompt: ${imgPrompt.trim()} -->\n`;
-    }
-
-    // C. Save Individual Section File
     const sectionFileName = `${String(i + 1).padStart(
       2,
       "0"
@@ -285,115 +207,160 @@ export const runWorkflow = async (articleData) => {
     // Accumulate for Context
     fullBlogContent += finalSectionContent;
 
-    // D. Generate Infographic Mapping (Parallel)
-    const infoMapping = await generateContent(
-      INFOGRAPHIC_PROMPT(sectionBody),
-      "Extract infographic details."
-    );
-    if (!infoMapping.includes("NO_INFOGRAPHIC")) {
-      infographicContent += `## For Section: ${section.h2Heading}\n${infoMapping}\n\n`;
-    }
-
     // Safety pause to avoid hitting rate limits too hard if using free tier, and to mimic "thinking"
     await sleep(1000);
   }
 
+  // --- MANDATORY SECTIONS (FAQ & CONCLUSION) ---
+  console.log(chalk.yellow("Phase 3: Ensuring Mandatory Sections (FAQ & Conclusion)..."));
+  
+  // Re-scan directory to find current max section number and existing files
+  const currentFiles = fs.readdirSync(articleDir);
+  let maxSectionNum = 0;
+  let hasFaq = false;
+  let hasConclusion = false;
+
+  for (const file of currentFiles) {
+    const match = file.match(/^(\d+)-/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > maxSectionNum) maxSectionNum = num;
+    }
+    if (file.toLowerCase().includes("faq") || file.toLowerCase().includes("questions")) hasFaq = true;
+    if (file.toLowerCase().includes("conclusion")) hasConclusion = true;
+  }
+  
+  // Also check fullBlogContent for headers if files were manually merged or something (fallback)
+  if (!hasFaq && /#\s*Frequently Question/i.test(fullBlogContent)) hasFaq = true;
+  if (!hasConclusion && /#\s*Conclusion/i.test(fullBlogContent)) hasConclusion = true;
+
+  // 1. Generate Conclusion if missing (Order: Intro -> Body -> Conclusion -> FAQ)
+  if (!hasConclusion) {
+    console.log(chalk.cyan(`Generating Mandatory Section: Conclusion`));
+    const conclusionHeader = "Conclusion";
+    const { content: conclusionBody, usage: conclusionUsage } = await generateContent(
+      SECTION_PROMPT(
+        conclusionHeader,
+        articleData,
+        fullBlogContent, // Passing FULL content as context
+        ["(Entire Blog Context)"],
+        [],
+        articleData.referenceLinks,
+        articleData.faqs,
+        articleData.internalLinks
+      ),
+      `Write the Conclusion section based on the blog content provided.`
+    );
+    
+    costTracker.track("Conclusion", conclusionUsage);
+
+    maxSectionNum++;
+    const conclusionFileName = `${String(maxSectionNum).padStart(2, "0")}-conclusion.md`;
+    // FAILSAFE: Forcefully replace any remaining em-dashes with hyphens
+    const cleanConclusionBody = conclusionBody.replace(/—/g, "-");
+    const finalConclusionContent = `\n${cleanConclusionBody}\n`;
+
+    fs.writeFileSync(path.join(articleDir, conclusionFileName), finalConclusionContent);
+    fullBlogContent += finalConclusionContent;
+    await sleep(1000);
+  } else {
+    console.log(chalk.gray("Conclusion section already exists. Skipping."));
+  }
+
+  // 2. Generate FAQ if missing
+  if (!hasFaq) {
+    console.log(chalk.cyan(`Generating Mandatory Section: Frequently Asked Questions`));
+    const faqHeader = "Frequently Asked Questions";
+    const { content: faqBody, usage: faqUsage } = await generateContent(
+      SECTION_PROMPT(
+        faqHeader,
+        articleData,
+        fullBlogContent, // Passing FULL content as context
+        ["(Entire Blog Context)"], 
+        ["Conclusion"],
+        articleData.referenceLinks,
+        articleData.faqs,
+        articleData.internalLinks
+      ),
+      `Write the Frequently Asked Questions section based on the blog content provided.`
+    );
+    
+    costTracker.track("FAQ", faqUsage);
+
+    maxSectionNum++;
+    const faqFileName = `${String(maxSectionNum).padStart(2, "0")}-frequently-asked-questions.md`;
+    // FAILSAFE: Forcefully replace any remaining em-dashes with hyphens
+    const cleanFaqBody = faqBody.replace(/—/g, "-");
+    const finalFaqContent = `\n${cleanFaqBody}\n`;
+    
+    fs.writeFileSync(path.join(articleDir, faqFileName), finalFaqContent);
+    fullBlogContent += finalFaqContent;
+    await sleep(1000);
+  } else {
+    console.log(chalk.gray("FAQ section already exists. Skipping."));
+  }
+
   // 6. Final Compilation
   console.log(chalk.green("Phase 5: Compilation..."));
+  
+  // Generate Meta Data
+  console.log(chalk.cyan("Generating Meta Data (Title, Description, Page Title)..."));
+  
+  let metaData = {
+    metaTitle: articleData.title,
+    metaDescription: "",
+    pageTitle: articleData.title
+  };
+
+  try {
+    const { content: metaResponse, usage: metaUsage } = await generateContent(
+        META_DATA_PROMPT(articleData),
+        "Write the meta data in JSON format."
+    );
+
+    costTracker.track("Metadata", metaUsage);
+
+    // Attempt to parse JSON
+    const jsonMatch = metaResponse.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      metaData = JSON.parse(jsonMatch[0]);
+    } else {
+        // Fallback or log warning
+        console.warn("Could not parse JSON from Meta Data response, using raw output for description if possible");
+        metaData.metaDescription = metaResponse.slice(0, 160);
+    }
+  } catch (e) {
+    console.error("Error generating/parsing metadata:", e);
+  }
+
+  // Get Totals
+  const totals = costTracker.getTotals();
+
+  console.log(chalk.magenta(`\n💰 Usage Report:`));
+  console.log(chalk.magenta(`   Input Tokens: ${totals.promptTokens}`));
+  console.log(chalk.magenta(`   Output Tokens: ${totals.completionTokens}`));
+  console.log(chalk.magenta(`   Total Estimated Cost: $${totals.cost.toFixed(4)}`));
+
   const fullFilePath = path.join(articleDir, "FULL_POST.md");
-  const infoFilePath = path.join(articleDir, "INFOGRAPHIC_PLAN.md");
 
   // Add Metadata Header
   const header = `---
-title: ${articleData.title}
+title: ${metaData.pageTitle || articleData.title}
+meta_title: ${metaData.metaTitle}
+description: ${metaData.metaDescription}
 slug: ${slug}
 date: ${articleData.publishDate || new Date().toISOString().split("T")[0]}
 author: ${articleData.author}
+total_tokens: ${totals.promptTokens + totals.completionTokens}
+input_tokens: ${totals.promptTokens}
+output_tokens: ${totals.completionTokens}
+estimated_cost_usd: ${totals.cost.toFixed(4)}
 ---
 
 `;
 
   fs.writeFileSync(fullFilePath, header + fullBlogContent);
-  fs.writeFileSync(infoFilePath, infographicContent);
 
   console.log(chalk.green(`\nCOMPLETED: ${articleData.title}`));
   console.log(`Saved to: ${articleDir}`);
-
-  // 7. Generate Images from Infographic Plan
-  console.log(
-    chalk.yellow("Phase 6: Generating Images from Infographic Plan...")
-  );
-
-  // Parse the infographic plan to extract image prompts
-  const imagePrompts = parseImagePrompts(infoFilePath);
-
-  console.log(imagePrompts);
-
-  if (imagePrompts.length > 0) {
-    console.log(
-      chalk.cyan(`Found ${imagePrompts.length} image prompts to generate.`)
-    );
-
-    // Create directory for images
-    const imagesDir = path.join(articleDir, "images");
-    if (!fs.existsSync(imagesDir)) {
-      fs.mkdirSync(imagesDir, { recursive: true });
-    }
-
-    // Generate each image
-    for (const imgPrompt of imagePrompts) {
-      console.log(
-        chalk.cyan(`Generating image for: ${imgPrompt.sectionTitle}`)
-      );
-
-      try {
-        // Generate the image using the enhanced generateImage function
-        const imageFilenames = await generateImage(
-          imgPrompt.prompt, // prompt
-          imgPrompt.filename, // slug
-          1, // numberOfImages
-          { width: 1408, height: 768 }, // dimensions
-          null // brandingPrompt (use default)
-        );
-
-        if (imageFilenames && imageFilenames.length > 0) {
-          const imageFilename = imageFilenames[0];
-          const imagePath = path.join(imagesDir, imageFilename);
-
-          console.log(
-            chalk.green(`Image generated successfully: ${imagePath}`)
-          );
-
-          // Add image link to the corresponding section file
-          const sectionFileName = imgPrompt.filename + ".md";
-          const sectionFilePath = path.join(articleDir, sectionFileName);
-
-          if (fs.existsSync(sectionFilePath)) {
-            // Read the current content
-            let sectionContent = fs.readFileSync(sectionFilePath, "utf8");
-
-            // Add the image link
-            const imageLink = `\n![Infographic for ${imgPrompt.sectionTitle}](images/${imageFilename})\n`;
-            sectionContent += imageLink;
-
-            // Write the updated content
-            fs.writeFileSync(sectionFilePath, sectionContent);
-            console.log(chalk.green(`Added image link to ${sectionFileName}`));
-          }
-        }
-      } catch (error) {
-        console.error(
-          chalk.red(`Error generating image for ${imgPrompt.sectionTitle}:`),
-          error
-        );
-      }
-
-      // Pause between image generations
-      await sleep(2000);
-    }
-
-    console.log(chalk.green("Image generation complete!"));
-  } else {
-    console.log(chalk.yellow("No image prompts found in infographic plan."));
-  }
 };
